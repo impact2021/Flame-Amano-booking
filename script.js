@@ -24,7 +24,7 @@ bookingForm.addEventListener('submit', function(e) {
     
     // Validate phone number
     if (!validatePhone(formData.phone)) {
-        alert('Please enter a valid phone number');
+        alert('Please enter a valid phone number (at least 10 digits)');
         return;
     }
     
@@ -34,12 +34,12 @@ bookingForm.addEventListener('submit', function(e) {
     currentDate.setHours(0, 0, 0, 0);
     
     if (selectedDate < currentDate) {
-        alert('Please select a future date');
+        alert('Please select today\'s date or a future date');
         return;
     }
     
     // Simulate form submission
-    console.log('Booking submitted:', formData);
+    console.log('Booking submitted successfully');
     
     // Hide form and show success message
     bookingForm.style.display = 'none';
@@ -55,9 +55,22 @@ bookingForm.addEventListener('submit', function(e) {
 
 // Phone validation function
 function validatePhone(phone) {
-    // Basic phone validation - accepts various formats
+    // Remove all non-digit characters to count actual digits
+    const digitsOnly = phone.replace(/\D/g, '');
+    
+    // Must have at least 10 digits
+    if (digitsOnly.length < 10) {
+        return false;
+    }
+    
+    // Check if the phone contains only valid characters
     const phoneRegex = /^[\d\s\-\+\(\)]+$/;
-    return phoneRegex.test(phone) && phone.replace(/\D/g, '').length >= 10;
+    if (!phoneRegex.test(phone)) {
+        return false;
+    }
+    
+    // Ensure there's at least one digit (prevents all symbols like "+++++")
+    return /\d/.test(phone);
 }
 
 // Add input formatting for phone number
@@ -76,7 +89,7 @@ timeInput.addEventListener('change', function(e) {
     
     // Business hours: 11:00 AM to 10:00 PM
     if (hours < 11 || hours >= 22) {
-        alert('Please select a time between 11:00 AM and 10:00 PM');
+        alert('Restaurant hours are 11:00 AM to 10:00 PM. Please select a time within these hours.');
         e.target.value = '';
     }
 });
