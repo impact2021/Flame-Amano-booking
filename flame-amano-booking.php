@@ -78,7 +78,7 @@ function flame_amano_handle_submission() {
     // prepare email to restaurant
     $recipient = 'bookings@flameamano.co.nz'; // requested recipient
     $site_name = get_bloginfo( 'name' );
-    $subject   = "New booking request — {$site_name} ({$date_for_email} {$time_display})";
+    $subject   = "New booking request - {$site_name} ({$date_for_email} {$time_display})";
     $message   = "<h3>New booking request</h3>";
     $message  .= "<p><strong>Name:</strong> " . esc_html( $name ) . "</p>";
     $message  .= "<p><strong>Contact:</strong> " . esc_html( $contact ) . "</p>";
@@ -108,11 +108,11 @@ function flame_amano_handle_submission() {
     // Prepare and send confirmation email to the customer (if customer's email valid)
     $sent_to_customer = true; // default true when no customer email available (shouldn't happen because email is required)
     if ( is_email( $email ) ) {
-        $customer_subject = "Your booking request — {$site_name} ({$date_for_email} {$time_display})";
+        $customer_subject = "Your booking request - {$site_name} ({$date_for_email} {$time_display})";
         // Message body for customer (plain HTML)
         $customer_message  = "<p>Hi " . esc_html( $name ) . ",</p>";
         $customer_message .= "<p>Thanks for your booking request.</p>";
-        $customer_message .= "<p><strong>Please note this is not yet confirmed — we'll email you once your reservation is secured.</strong></p>";
+        $customer_message .= "<p><strong>Please note this is not yet confirmed - we'll email you once your reservation is secured.</strong></p>";
         $customer_message .= "<p><strong>Booking details</strong><br>";
         $customer_message .= "People: " . esc_html( $people ) . "<br>";
         $customer_message .= "Date: " . esc_html( $date_for_email ) . "<br>";
@@ -171,7 +171,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
 <div style="margin-top:15px;background:#e2ffe2;padding:18px;border-radius:6px;">
   <strong>Thanks for your booking request</strong>
   <p style="margin:.5em 0 0;">
-    Please note this is not yet confirmed — we'll email you once your reservation is secured.
+    Please note this is not yet confirmed - we\'ll email you once your reservation is secured.
   </p>
   <div style="margin-top:14px;display:flex;gap:12px;flex-wrap:wrap;">
     <a href="tel:' . esc_attr( $phone1_tel ) . '" style="flex:1;min-width:160px;text-align:center;padding:12px 14px;background:#bb9739;color:#111;border-radius:6px;font-weight:700;text-decoration:none;box-shadow:0 1px 3px rgba(0,0,0,0.08);">Call ' . esc_html( $phone1_display ) . '</a>
@@ -179,7 +179,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
   </div>
 </div>';
             echo $confirmation;
-            // Do not render the form when successful — only show confirmation
+            // Do not render the form when successful - only show confirmation
             return ob_get_clean();
         } else {
             $err = ! empty( $_GET['flame_booking_msg'] ) ? rawurldecode( wp_unslash( $_GET['flame_booking_msg'] ) ) : 'Submission failed.';
