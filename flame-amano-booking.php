@@ -341,7 +341,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
         if(forDateStr){
           var d=new Date(forDateStr+'T00:00:00');
           if(!isNaN(d.getTime())){
-            var dow=d.getDay(); // 0=Sun..6=Sat
+            var dow=d.getDay(); // 0=Sun..6=Sat (Friday=5)
             if(dow===5){
               groups=[{label:'Lunch',ranges:morningRanges},{label:'Dinner',ranges:eveningRanges}];
             }
