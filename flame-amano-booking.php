@@ -2,7 +2,7 @@
 /*
 Plugin Name: Flame Amano Booking Form
 Description: Simple booking form with dropdown for 1-14 people, date, time (5pm-8:30pm in 15 min steps), name, contact, email, details, and allergy note. Responsive: two columns on desktop, one on mobile. Posts handled via admin-post.php to avoid 404. Sends email to bookings@flameamano.co.nz and a confirmation to the customer. Date in emails is dd/mm/yyyy.
-Version: 1.3.2
+Version: 1.3.3
 Author: Impact Websites
 */
 
@@ -196,34 +196,30 @@ add_shortcode( 'flame_amano_booking_form', function() {
     // Minimum allowed date: allow bookings from today
     $min_date = date( 'Y-m-d' );
 
-    // Helper to determine if a date (YYYY-MM-DD) is Fri/Sat/Sun (PHP: Mon=1 .. Sun=7)
-    // COMMENTED OUT - lunch hours disabled
-    // $is_weekend_fs = false;
-    // if ( ! empty( $posted['selectedDate'] ) ) {
-    //     $ts = strtotime( $posted['selectedDate'] );
-    //     if ( $ts !== false ) {
-    //         $dow = intval( date( 'N', $ts ) );
-    //         if ( in_array( $dow, array( 5, 6, 7 ), true ) ) {
-    //             $is_weekend_fs = true;
-    //         }
-    //     }
-    // }
+    // Helper to determine if a date (YYYY-MM-DD) is Friday (PHP: Mon=1 .. Sun=7)
+    $is_friday = false;
+    if ( ! empty( $posted['selectedDate'] ) ) {
+        $ts = strtotime( $posted['selectedDate'] );
+        if ( $ts !== false ) {
+            $dow = intval( date( 'N', $ts ) );
+            if ( $dow === 5 ) {
+                $is_friday = true;
+            }
+        }
+    }
 
     // Ranges
     $evening_ranges = array( array( 'start' => '17:00', 'end' => '20:30' ) );
-    // COMMENTED OUT - lunch hours disabled
-    // $morning_ranges = array( array( 'start' => '11:30', 'end' => '13:30' ) );
+    $morning_ranges = array( array( 'start' => '11:30', 'end' => '13:30' ) );
 
     // Build grouped structure for initial render
     $initial_groups = array();
-    // COMMENTED OUT - lunch hours disabled
-    // if ( $is_weekend_fs ) {
-    //     $initial_groups[] = array( 'label' => 'Lunch', 'ranges' => $morning_ranges );
-    //     $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
-    // } else {
-    //     $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
-    // }
-    $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
+    if ( $is_friday ) {
+        $initial_groups[] = array( 'label' => 'Lunch', 'ranges' => $morning_ranges );
+        $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
+    } else {
+        $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
+    }
 
     // Function to generate grouped time options server-side for initial render
     $generate_grouped_time_options = function( $groups, $selected ) {
@@ -332,8 +328,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
         return out;
       }
 
-      // COMMENTED OUT - lunch hours disabled
-      // var morningRanges=[{start:'11:30',end:'13:30'}];
+      var morningRanges=[{start:'11:30',end:'13:30'}];
       var eveningRanges=[{start:'17:00',end:'20:30'}];
 
       var dateInput=document.getElementById('selectedDate');
@@ -343,16 +338,15 @@ add_shortcode( 'flame_amano_booking_form', function() {
 
       function rebuildTimeOptions(forDateStr){
         var groups=[{label:'Dinner',ranges:eveningRanges}];
-        // COMMENTED OUT - lunch hours disabled
-        // if(forDateStr){
-        //   var d=new Date(forDateStr+'T00:00:00');
-        //   if(!isNaN(d.getTime())){
-        //     var dow=d.getDay(); // 0=Sun..6=Sat
-        //     if(dow===5||dow===6||dow===0){
-        //       groups=[{label:'Lunch',ranges:morningRanges},{label:'Dinner',ranges:eveningRanges}];
-        //     }
-        //   }
-        // }
+        if(forDateStr){
+          var d=new Date(forDateStr+'T00:00:00');
+          if(!isNaN(d.getTime())){
+            var dow=d.getDay(); // 0=Sun..6=Sat
+            if(dow===5){
+              groups=[{label:'Lunch',ranges:morningRanges},{label:'Dinner',ranges:eveningRanges}];
+            }
+          }
+        }
         var prevValue = preservedTime || timeSelect.value || '';
         timeSelect.innerHTML = '<option value="">Select a time</option>';
         var grouped = buildGroupedOptions(groups);
