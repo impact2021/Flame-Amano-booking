@@ -1,8 +1,8 @@
 <?php
 /*
 Plugin Name: Flame Amano Booking Form
-Description: Simple booking form with dropdown for 1-14 people, date, time (5pm-8:30pm in 15 min steps), name, contact, email, details, and allergy note. Responsive: two columns on desktop, one on mobile. Posts handled via admin-post.php to avoid 404. Sends email to bookings@flameamano.co.nz and a confirmation to the customer. Date in emails is dd/mm/yyyy.
-Version: 1.3.2
+Description: Simple booking form with dropdown for 1-14 people, date, time (5pm-8:30pm in 15 min steps), name, contact, email, details, and allergy note. Responsive: two columns on desktop, one on mobile. Posts handled via admin-post.php to avoid 404. Sends email to bookings@flameamano.co.nz and a confirmation to the customer. Date in emails is dd/mm/yyyy. Includes Cloudflare Turnstile spam protection.
+Version: 1.4.0
 Author: Impact Websites
 */
 
@@ -10,6 +10,13 @@ Author: Impact Websites
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
+
+/**
+ * Configuration: Cloudflare Turnstile Keys
+ * Replace these with your actual Turnstile site key and secret key
+ */
+define( 'FLAME_TURNSTILE_SITE_KEY', '' ); // Add your site key here
+define( 'FLAME_TURNSTILE_SECRET_KEY', '' ); // Add your secret key here
 
 /**
  * Handle submission via admin-post (for logged-in and non-logged-in users)
@@ -32,6 +39,53 @@ function flame_amano_handle_submission() {
         ), wp_get_referer() ?: home_url() );
         wp_safe_redirect( esc_url_raw( $redirect ) );
         exit;
+    }
+
+    // Cloudflare Turnstile verification
+    if ( defined( 'FLAME_TURNSTILE_SECRET_KEY' ) && ! empty( FLAME_TURNSTILE_SECRET_KEY ) ) {
+        $turnstile_response = isset( $_POST['cf-turnstile-response'] ) ? sanitize_text_field( wp_unslash( $_POST['cf-turnstile-response'] ) ) : '';
+        
+        if ( empty( $turnstile_response ) ) {
+            $redirect = add_query_arg( array(
+                'flame_booking'     => 'error',
+                'flame_booking_msg' => rawurlencode( 'Please complete the security verification.' ),
+            ), wp_get_referer() ?: home_url() );
+            wp_safe_redirect( esc_url_raw( $redirect ) );
+            exit;
+        }
+
+        // Verify the Turnstile response with Cloudflare
+        $verify_url = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+        $verify_data = array(
+            'secret'   => FLAME_TURNSTILE_SECRET_KEY,
+            'response' => $turnstile_response,
+            'remoteip' => $_SERVER['REMOTE_ADDR'] ?? '',
+        );
+
+        $verify_response = wp_remote_post( $verify_url, array(
+            'body' => $verify_data,
+        ) );
+
+        if ( is_wp_error( $verify_response ) ) {
+            $redirect = add_query_arg( array(
+                'flame_booking'     => 'error',
+                'flame_booking_msg' => rawurlencode( 'Security verification failed. Please try again.' ),
+            ), wp_get_referer() ?: home_url() );
+            wp_safe_redirect( esc_url_raw( $redirect ) );
+            exit;
+        }
+
+        $verify_body = wp_remote_retrieve_body( $verify_response );
+        $verify_result = json_decode( $verify_body, true );
+
+        if ( empty( $verify_result['success'] ) ) {
+            $redirect = add_query_arg( array(
+                'flame_booking'     => 'error',
+                'flame_booking_msg' => rawurlencode( 'Security verification failed. Please try again.' ),
+            ), wp_get_referer() ?: home_url() );
+            wp_safe_redirect( esc_url_raw( $redirect ) );
+            exit;
+        }
     }
 
     // required fields
@@ -303,10 +357,20 @@ add_shortcode( 'flame_amano_booking_form', function() {
           <textarea id="details" name="details" placeholder="Enter any details..."><?php echo esc_textarea( $posted['details'] ); ?></textarea>
           <div style="font-size:12px;color:#555;margin-top:3px;margin-bottom:10px;">Let us know about any allergies etc.</div>
         </div>
+
+        <?php if ( defined( 'FLAME_TURNSTILE_SITE_KEY' ) && ! empty( FLAME_TURNSTILE_SITE_KEY ) ): ?>
+        <div class="sbp-form-group sbp-form-group-full">
+          <div class="cf-turnstile" data-sitekey="<?php echo esc_attr( FLAME_TURNSTILE_SITE_KEY ); ?>"></div>
+        </div>
+        <?php endif; ?>
       </div>
 
       <button type="submit">Submit Booking</button>
     </form>
+
+    <?php if ( defined( 'FLAME_TURNSTILE_SITE_KEY' ) && ! empty( FLAME_TURNSTILE_SITE_KEY ) ): ?>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <?php endif; ?>
 
     <script>
     (function(){
