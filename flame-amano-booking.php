@@ -13,10 +13,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 /**
  * Configuration: Cloudflare Turnstile Keys
- * Replace these with your actual Turnstile site key and secret key
+ * You can define these in wp-config.php (recommended) or here
  */
-define( 'FLAME_TURNSTILE_SITE_KEY', '' ); // Add your site key here
-define( 'FLAME_TURNSTILE_SECRET_KEY', '' ); // Add your secret key here
+if ( ! defined( 'FLAME_TURNSTILE_SITE_KEY' ) ) {
+    define( 'FLAME_TURNSTILE_SITE_KEY', '' ); // Add your site key here
+}
+if ( ! defined( 'FLAME_TURNSTILE_SECRET_KEY' ) ) {
+    define( 'FLAME_TURNSTILE_SECRET_KEY', '' ); // Add your secret key here
+}
 
 /**
  * Handle submission via admin-post (for logged-in and non-logged-in users)
@@ -56,10 +60,20 @@ function flame_amano_handle_submission() {
 
         // Verify the Turnstile response with Cloudflare
         $verify_url = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+        
+        // Get client IP address (handle proxies)
+        $client_ip = '';
+        if ( ! empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
+            $ip_list = explode( ',', $_SERVER['HTTP_X_FORWARDED_FOR'] );
+            $client_ip = trim( $ip_list[0] );
+        } elseif ( ! empty( $_SERVER['REMOTE_ADDR'] ) ) {
+            $client_ip = $_SERVER['REMOTE_ADDR'];
+        }
+        
         $verify_data = array(
             'secret'   => FLAME_TURNSTILE_SECRET_KEY,
             'response' => $turnstile_response,
-            'remoteip' => $_SERVER['REMOTE_ADDR'] ?? '',
+            'remoteip' => $client_ip,
         );
 
         $verify_response = wp_remote_post( $verify_url, array(
@@ -78,7 +92,7 @@ function flame_amano_handle_submission() {
         $verify_body = wp_remote_retrieve_body( $verify_response );
         $verify_result = json_decode( $verify_body, true );
 
-        if ( empty( $verify_result['success'] ) ) {
+        if ( ! is_array( $verify_result ) || empty( $verify_result['success'] ) ) {
             $redirect = add_query_arg( array(
                 'flame_booking'     => 'error',
                 'flame_booking_msg' => rawurlencode( 'Security verification failed. Please try again.' ),

@@ -54,4 +54,24 @@ If you need to temporarily disable Turnstile:
 
 ## Security Note
 
-**Important:** Never commit your secret key to a public repository. The keys should be added directly on your server or in a secure configuration file.
+**Important:** Never commit your secret key to a public repository. 
+
+### Recommended: Use wp-config.php
+
+For better security, instead of editing the plugin file directly, add your keys to your WordPress `wp-config.php` file:
+
+```php
+define( 'FLAME_TURNSTILE_SITE_KEY', 'your-site-key-here' );
+define( 'FLAME_TURNSTILE_SECRET_KEY', 'your-secret-key-here' );
+```
+
+Add these lines in `wp-config.php` before the line that says `/* That's all, stop editing! */`.
+
+This approach:
+- Keeps sensitive credentials separate from plugin code
+- Prevents accidental exposure when updating the plugin
+- Is the WordPress-recommended way to store configuration
+
+### Alternative: Edit Plugin File Directly
+
+If you prefer, you can add the keys directly in the `flame-amano-booking.php` file as shown in Step 2 above. However, be aware that plugin updates may overwrite these changes.
