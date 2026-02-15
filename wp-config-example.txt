@@ -1,0 +1,25 @@
+// ============================================================================
+// Cloudflare Turnstile Configuration for Flame Amano Booking Form
+// ============================================================================
+//
+// INSTRUCTIONS:
+// 1. Copy these two lines
+// 2. Open your wp-config.php file
+// 3. Find the line: /* That's all, stop editing! Happy publishing. */
+// 4. Paste ABOVE that line
+// 5. Replace 'your-site-key-here' and 'your-secret-key-here' with actual keys
+// 6. Save the file
+//
+// Where to get your keys:
+// - Visit: https://dash.cloudflare.com/
+// - Navigate to: Turnstile
+// - Create a new site or use existing keys
+//
+// ============================================================================
+
+define( 'FLAME_TURNSTILE_SITE_KEY', 'your-site-key-here' );
+define( 'FLAME_TURNSTILE_SECRET_KEY', 'your-secret-key-here' );
+
+// ============================================================================
+// That's it! The booking form will now display the Turnstile widget.
+// ============================================================================
