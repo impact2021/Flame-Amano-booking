@@ -35,13 +35,20 @@ function flame_amano_handle_submission() {
         exit;
     }
 
+    // Build a clean base URL for redirects. wp_get_referer() may return an HTML-entity-encoded
+    // URL (e.g. & as &amp;) because wp_nonce_field() runs esc_url() on the current page URL
+    // when outputting the _wp_http_referer hidden field. Decoding entities and stripping any
+    // previous flame_booking params ensures redirect URLs are always valid and parseable.
+    $redirect_base = html_entity_decode( wp_get_referer() ?: home_url(), ENT_QUOTES, 'UTF-8' );
+    $redirect_base = remove_query_arg( array( 'flame_booking', 'flame_booking_msg' ), $redirect_base );
+
     // nonce check
     if ( empty( $_POST['flame_booking_nonce'] ) || ! wp_verify_nonce( wp_unslash( $_POST['flame_booking_nonce'] ), 'flame_booking_submit' ) ) {
         $redirect = add_query_arg( array(
             'flame_booking'     => 'error',
             'flame_booking_msg' => rawurlencode( 'Invalid submission (security check failed).' ),
-        ), wp_get_referer() ?: home_url() );
-        wp_safe_redirect( esc_url_raw( $redirect ) );
+        ), $redirect_base );
+        wp_safe_redirect( $redirect );
         exit;
     }
 
@@ -53,8 +60,8 @@ function flame_amano_handle_submission() {
             $redirect = add_query_arg( array(
                 'flame_booking'     => 'error',
                 'flame_booking_msg' => rawurlencode( 'Please complete the security verification.' ),
-            ), wp_get_referer() ?: home_url() );
-            wp_safe_redirect( esc_url_raw( $redirect ) );
+            ), $redirect_base );
+            wp_safe_redirect( $redirect );
             exit;
         }
 
@@ -84,8 +91,8 @@ function flame_amano_handle_submission() {
             $redirect = add_query_arg( array(
                 'flame_booking'     => 'error',
                 'flame_booking_msg' => rawurlencode( 'Security verification failed. Please try again.' ),
-            ), wp_get_referer() ?: home_url() );
-            wp_safe_redirect( esc_url_raw( $redirect ) );
+            ), $redirect_base );
+            wp_safe_redirect( $redirect );
             exit;
         }
 
@@ -96,8 +103,8 @@ function flame_amano_handle_submission() {
             $redirect = add_query_arg( array(
                 'flame_booking'     => 'error',
                 'flame_booking_msg' => rawurlencode( 'Security verification failed. Please try again.' ),
-            ), wp_get_referer() ?: home_url() );
-            wp_safe_redirect( esc_url_raw( $redirect ) );
+            ), $redirect_base );
+            wp_safe_redirect( $redirect );
             exit;
         }
     }
@@ -109,8 +116,8 @@ function flame_amano_handle_submission() {
             $redirect = add_query_arg( array(
                 'flame_booking'     => 'error',
                 'flame_booking_msg' => rawurlencode( 'Please complete all required fields.' ),
-            ), wp_get_referer() ?: home_url() );
-            wp_safe_redirect( esc_url_raw( $redirect ) );
+            ), $redirect_base );
+            wp_safe_redirect( $redirect );
             exit;
         }
     }
@@ -128,8 +135,8 @@ function flame_amano_handle_submission() {
         $redirect = add_query_arg( array(
             'flame_booking'     => 'error',
             'flame_booking_msg' => rawurlencode( 'Booking date not available. Please choose a date on or after the opening date.' ),
-        ), wp_get_referer() ?: home_url() );
-        wp_safe_redirect( esc_url_raw( $redirect ) );
+        ), $redirect_base );
+        wp_safe_redirect( $redirect );
         exit;
     }
 
@@ -206,15 +213,15 @@ function flame_amano_handle_submission() {
     // Decide redirect: consider restaurant email as primary success requirement
     if ( $sent_to_restaurant ) {
         // If customer email failed, still treat as success but include note (we can append a query param if desired)
-        $redirect = add_query_arg( array( 'flame_booking' => 'success' ), wp_get_referer() ?: home_url() );
+        $redirect = add_query_arg( array( 'flame_booking' => 'success' ), $redirect_base );
     } else {
         $redirect = add_query_arg( array(
             'flame_booking'     => 'error',
             'flame_booking_msg' => rawurlencode( 'There was an error sending the booking email. Please try again or contact the restaurant directly.' ),
-        ), wp_get_referer() ?: home_url() );
+        ), $redirect_base );
     }
 
-    wp_safe_redirect( esc_url_raw( $redirect ) );
+    wp_safe_redirect( $redirect );
     exit;
 }
 
