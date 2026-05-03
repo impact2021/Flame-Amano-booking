@@ -22,6 +22,11 @@ if ( ! defined( 'FLAME_TURNSTILE_SECRET_KEY' ) ) {
     define( 'FLAME_TURNSTILE_SECRET_KEY', '' ); // Add your secret key here
 }
 
+/** Booking hours configuration constants */
+define( 'FLAME_HOURS_MIN',  11 ); // earliest bookable hour (24-hour)
+define( 'FLAME_HOURS_MAX',  21 ); // latest bookable hour (24-hour)
+define( 'FLAME_SLOT_STEP',  30 ); // time-slot interval in minutes
+
 /**
  * Handle submission via admin-post (for logged-in and non-logged-in users)
  */
@@ -37,7 +42,7 @@ add_action( 'admin_post_flame_amano_booking_submit', 'flame_amano_handle_submiss
  */
 function flame_amano_valid_times() {
     $times = array();
-    for ( $m = 11 * 60; $m <= 21 * 60; $m += 30 ) {
+    for ( $m = FLAME_HOURS_MIN * 60; $m <= FLAME_HOURS_MAX * 60; $m += FLAME_SLOT_STEP ) {
         $times[] = sprintf( '%02d:%02d', intval( $m / 60 ), $m % 60 );
     }
     return $times;
@@ -371,6 +376,15 @@ function flame_amano_settings_page() {
           $ts = strtotime( $t );
           return array( 'value' => $t, 'label' => $ts ? date( 'g:i a', $ts ) : $t );
       }, $valid_times ) ); ?>;
+      var defaultTimes = <?php
+          $def = flame_amano_get_default_hours()[0];
+          echo wp_json_encode( array(
+              'lunch_start'  => $def['lunch_start'],
+              'lunch_end'    => $def['lunch_end'],
+              'dinner_start' => $def['dinner_start'],
+              'dinner_end'   => $def['dinner_end'],
+          ) );
+      ?>;
 
       function makeSelect(name, selected) {
         var html = '<select name="' + name + '">';
@@ -389,11 +403,11 @@ function flame_amano_settings_page() {
           '<td><input type="text" name="flame_events[' + i + '][name]" placeholder="Event name" style="width:140px;"></td>' +
           '<td style="text-align:center;"><input type="checkbox" name="flame_events[' + i + '][enabled]" value="1" checked></td>' +
           '<td style="text-align:center;"><input type="checkbox" name="flame_events[' + i + '][lunch_enabled]" value="1"></td>' +
-          '<td>' + makeSelect('flame_events[' + i + '][lunch_start]',  '11:30') + '</td>' +
-          '<td>' + makeSelect('flame_events[' + i + '][lunch_end]',    '13:30') + '</td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][lunch_start]',  defaultTimes.lunch_start)  + '</td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][lunch_end]',    defaultTimes.lunch_end)    + '</td>' +
           '<td style="text-align:center;"><input type="checkbox" name="flame_events[' + i + '][dinner_enabled]" value="1" checked></td>' +
-          '<td>' + makeSelect('flame_events[' + i + '][dinner_start]', '17:00') + '</td>' +
-          '<td>' + makeSelect('flame_events[' + i + '][dinner_end]',   '20:30') + '</td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][dinner_start]', defaultTimes.dinner_start) + '</td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][dinner_end]',   defaultTimes.dinner_end)   + '</td>' +
           '<td><button type="button" class="button flame-remove-event">Remove</button></td>';
         tbody.appendChild(tr);
       }
@@ -683,7 +697,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
                 if ( $start_ts === false || $end_ts === false || $end_ts < $start_ts ) {
                     continue;
                 }
-                for ( $t = $start_ts; $t <= $end_ts; $t += 30 * 60 ) {
+                for ( $t = $start_ts; $t <= $end_ts; $t += FLAME_SLOT_STEP * 60 ) {
                     $value      = date( 'H:i', $t );
                     $label_time = date( 'g:i a', $t );
                     $out       .= '<option value="' . esc_attr( $value ) . '" ' . selected( $selected, $value, false ) . '>' . esc_html( $label_time ) . '</option>';
@@ -767,6 +781,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
     (function(){
       var minDate = <?php echo wp_json_encode( $min_date ); ?>;
       var preservedTime = <?php echo wp_json_encode( $posted['selectedTime'] ); ?> || '';
+      var slotStep = <?php echo (int) FLAME_SLOT_STEP; ?>;
 
       // Per-day groups config: key = day-of-week integer (0=Sun..6=Sat)
       var hoursConfig = <?php echo wp_json_encode( $js_hours ); ?>;
@@ -784,7 +799,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
           g.ranges.forEach(function(r){
             var start=parseHM(r.start), end=parseHM(r.end);
             if(isNaN(start)||isNaN(end)||end<start) return;
-            for(var t=start;t<=end;t+=30){ opts.push({value:formatValue(t),label:formatLabel(t)}); }
+            for(var t=start;t<=end;t+=slotStep){ opts.push({value:formatValue(t),label:formatLabel(t)}); }
           });
           if(opts.length) out.push({label:g.label,options:opts});
         });
