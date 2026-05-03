@@ -1,8 +1,8 @@
 <?php
 /*
 Plugin Name: Flame Amano Booking Form
-Description: Simple booking form with dropdown for 1-14 people, date, time (5pm-8:30pm in 15 min steps), name, contact, email, details, and allergy note. Responsive: two columns on desktop, one on mobile. Posts handled via admin-post.php to avoid 404. Sends email to bookings@flameamano.co.nz and a confirmation to the customer. Date in emails is dd/mm/yyyy. Includes Cloudflare Turnstile spam protection.
-Version: 1.4.0
+Description: Simple booking form with dropdown for 1-14 people, date, time (5pm-8:30pm in 15 min steps), name, contact, email, details, and allergy note. Responsive: two columns on desktop, one on mobile. Posts handled via admin-post.php to avoid 404. Sends email to bookings@flameamano.co.nz and a confirmation to the customer. Date in emails is dd/mm/yyyy. Includes Cloudflare Turnstile spam protection. Admin settings page for configuring per-day hours and special events.
+Version: 1.5.0
 Author: Impact Websites
 */
 
@@ -27,6 +27,387 @@ if ( ! defined( 'FLAME_TURNSTILE_SECRET_KEY' ) ) {
  */
 add_action( 'admin_post_nopriv_flame_amano_booking_submit', 'flame_amano_handle_submission' );
 add_action( 'admin_post_flame_amano_booking_submit', 'flame_amano_handle_submission' );
+
+// ============================================================
+// Hours helpers
+// ============================================================
+
+/**
+ * Returns all valid half-hour time strings from 11:00 to 21:00.
+ */
+function flame_amano_valid_times() {
+    $times = array();
+    for ( $m = 11 * 60; $m <= 21 * 60; $m += 30 ) {
+        $times[] = sprintf( '%02d:%02d', intval( $m / 60 ), $m % 60 );
+    }
+    return $times;
+}
+
+/**
+ * Renders an HTML <select> for a time value, using the valid time list.
+ *
+ * @param string $name     The field name attribute.
+ * @param string $selected Currently selected HH:MM value.
+ * @return string HTML string.
+ */
+function flame_amano_time_select( $name, $selected ) {
+    $out = '<select name="' . esc_attr( $name ) . '">';
+    foreach ( flame_amano_valid_times() as $time ) {
+        $ts    = strtotime( $time );
+        $label = $ts ? date( 'g:i a', $ts ) : $time;
+        $out  .= '<option value="' . esc_attr( $time ) . '"' . selected( $selected, $time, false ) . '>' . esc_html( $label ) . '</option>';
+    }
+    $out .= '</select>';
+    return $out;
+}
+
+/**
+ * Returns the default per-day hours configuration (all days, dinner only 5pm–8:30pm).
+ */
+function flame_amano_get_default_hours() {
+    $default = array();
+    for ( $i = 0; $i <= 6; $i++ ) {
+        $default[ $i ] = array(
+            'enabled'        => true,
+            'lunch_enabled'  => false,
+            'lunch_start'    => '11:30',
+            'lunch_end'      => '13:30',
+            'dinner_enabled' => true,
+            'dinner_start'   => '17:00',
+            'dinner_end'     => '20:30',
+        );
+    }
+    return $default;
+}
+
+/**
+ * Returns the saved per-day hours configuration, merged with defaults.
+ */
+function flame_amano_get_hours() {
+    $saved    = get_option( 'flame_amano_hours', array() );
+    $defaults = flame_amano_get_default_hours();
+    $hours    = array();
+    for ( $i = 0; $i <= 6; $i++ ) {
+        $hours[ $i ] = wp_parse_args(
+            isset( $saved[ $i ] ) ? (array) $saved[ $i ] : array(),
+            $defaults[ $i ]
+        );
+    }
+    return $hours;
+}
+
+/**
+ * Returns the saved special events array.
+ */
+function flame_amano_get_special_events() {
+    $events = get_option( 'flame_amano_special_events', array() );
+    return is_array( $events ) ? $events : array();
+}
+
+/**
+ * Converts a single day/event config array into a grouped ranges array
+ * compatible with the booking form renderer.
+ *
+ * @param array $config Day or event config with lunch_ and dinner_ keys.
+ * @return array Array of groups, each with 'label' and 'ranges'.
+ */
+function flame_amano_build_groups_from_config( $config ) {
+    $groups = array();
+    if ( ! empty( $config['lunch_enabled'] ) ) {
+        $groups[] = array(
+            'label'  => 'Lunch',
+            'ranges' => array( array( 'start' => $config['lunch_start'], 'end' => $config['lunch_end'] ) ),
+        );
+    }
+    if ( ! empty( $config['dinner_enabled'] ) ) {
+        $groups[] = array(
+            'label'  => 'Dinner',
+            'ranges' => array( array( 'start' => $config['dinner_start'], 'end' => $config['dinner_end'] ) ),
+        );
+    }
+    return $groups;
+}
+
+/**
+ * Returns the time groups for a given date string (YYYY-MM-DD).
+ * Special events take priority over regular per-day hours.
+ *
+ * @param string $date_str YYYY-MM-DD, or empty for today.
+ * @return array Groups array suitable for the booking form.
+ */
+function flame_amano_get_groups_for_date( $date_str ) {
+    $ts = ! empty( $date_str ) ? strtotime( $date_str ) : false;
+
+    // Check special events first.
+    if ( $ts !== false ) {
+        foreach ( flame_amano_get_special_events() as $event ) {
+            if ( ! empty( $event['enabled'] ) && ! empty( $event['date'] ) && $event['date'] === $date_str ) {
+                return flame_amano_build_groups_from_config( $event );
+            }
+        }
+    }
+
+    // Fall back to regular weekly hours.
+    $hours = flame_amano_get_hours();
+    $dow   = $ts !== false ? intval( date( 'w', $ts ) ) : intval( date( 'w' ) ); // 0=Sun..6=Sat
+    $day   = isset( $hours[ $dow ] ) ? $hours[ $dow ] : array();
+
+    if ( empty( $day['enabled'] ) ) {
+        return array();
+    }
+
+    return flame_amano_build_groups_from_config( $day );
+}
+
+// ============================================================
+// Admin: menu registration
+// ============================================================
+
+add_action( 'admin_menu', 'flame_amano_admin_menu' );
+
+function flame_amano_admin_menu() {
+    add_menu_page(
+        'Flame Amano Booking Hours',
+        'Flame Booking',
+        'manage_options',
+        'flame-amano-booking',
+        'flame_amano_settings_page',
+        'dashicons-calendar-alt',
+        30
+    );
+}
+
+// ============================================================
+// Admin: save settings handler
+// ============================================================
+
+add_action( 'admin_post_flame_amano_save_settings', 'flame_amano_save_settings' );
+
+function flame_amano_save_settings() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Unauthorized' );
+    }
+
+    check_admin_referer( 'flame_amano_save_settings', 'flame_amano_settings_nonce' );
+
+    $valid_times  = flame_amano_valid_times();
+    $default_day  = flame_amano_get_default_hours()[0];
+
+    // --- Per-day hours ---
+    $hours_input = isset( $_POST['flame_hours'] ) ? (array) wp_unslash( $_POST['flame_hours'] ) : array();
+    $hours       = array();
+    for ( $i = 0; $i <= 6; $i++ ) {
+        $d = isset( $hours_input[ $i ] ) ? (array) $hours_input[ $i ] : array();
+
+        $lunch_start  = isset( $d['lunch_start'] )  && in_array( $d['lunch_start'],  $valid_times, true ) ? $d['lunch_start']  : $default_day['lunch_start'];
+        $lunch_end    = isset( $d['lunch_end'] )    && in_array( $d['lunch_end'],    $valid_times, true ) ? $d['lunch_end']    : $default_day['lunch_end'];
+        $dinner_start = isset( $d['dinner_start'] ) && in_array( $d['dinner_start'], $valid_times, true ) ? $d['dinner_start'] : $default_day['dinner_start'];
+        $dinner_end   = isset( $d['dinner_end'] )   && in_array( $d['dinner_end'],   $valid_times, true ) ? $d['dinner_end']   : $default_day['dinner_end'];
+
+        $hours[ $i ] = array(
+            'enabled'        => ! empty( $d['enabled'] ),
+            'lunch_enabled'  => ! empty( $d['lunch_enabled'] ),
+            'lunch_start'    => $lunch_start,
+            'lunch_end'      => $lunch_end,
+            'dinner_enabled' => ! empty( $d['dinner_enabled'] ),
+            'dinner_start'   => $dinner_start,
+            'dinner_end'     => $dinner_end,
+        );
+    }
+    update_option( 'flame_amano_hours', $hours );
+
+    // --- Special events ---
+    $events_input = isset( $_POST['flame_events'] ) ? (array) wp_unslash( $_POST['flame_events'] ) : array();
+    $events       = array();
+    foreach ( $events_input as $ev ) {
+        $ev   = (array) $ev;
+        $date = isset( $ev['date'] ) ? sanitize_text_field( $ev['date'] ) : '';
+        if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) ) {
+            continue;
+        }
+
+        $lunch_start  = isset( $ev['lunch_start'] )  && in_array( $ev['lunch_start'],  $valid_times, true ) ? $ev['lunch_start']  : $default_day['lunch_start'];
+        $lunch_end    = isset( $ev['lunch_end'] )    && in_array( $ev['lunch_end'],    $valid_times, true ) ? $ev['lunch_end']    : $default_day['lunch_end'];
+        $dinner_start = isset( $ev['dinner_start'] ) && in_array( $ev['dinner_start'], $valid_times, true ) ? $ev['dinner_start'] : $default_day['dinner_start'];
+        $dinner_end   = isset( $ev['dinner_end'] )   && in_array( $ev['dinner_end'],   $valid_times, true ) ? $ev['dinner_end']   : $default_day['dinner_end'];
+
+        $events[] = array(
+            'date'           => $date,
+            'name'           => sanitize_text_field( isset( $ev['name'] ) ? $ev['name'] : '' ),
+            'enabled'        => ! empty( $ev['enabled'] ),
+            'lunch_enabled'  => ! empty( $ev['lunch_enabled'] ),
+            'lunch_start'    => $lunch_start,
+            'lunch_end'      => $lunch_end,
+            'dinner_enabled' => ! empty( $ev['dinner_enabled'] ),
+            'dinner_start'   => $dinner_start,
+            'dinner_end'     => $dinner_end,
+        );
+    }
+    update_option( 'flame_amano_special_events', $events );
+
+    wp_safe_redirect( add_query_arg( array( 'page' => 'flame-amano-booking', 'saved' => '1' ), admin_url( 'admin.php' ) ) );
+    exit;
+}
+
+// ============================================================
+// Admin: settings page render
+// ============================================================
+
+function flame_amano_settings_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+
+    $saved       = ! empty( $_GET['saved'] );
+    $hours       = flame_amano_get_hours();
+    $events      = flame_amano_get_special_events();
+    $valid_times = flame_amano_valid_times();
+    $day_names   = array( 0 => 'Sunday', 1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday' );
+    $day_order   = array( 1, 2, 3, 4, 5, 6, 0 ); // Mon first, Sun last
+    ?>
+    <div class="wrap">
+      <h1>Flame Amano Booking Hours</h1>
+
+      <?php if ( $saved ) : ?>
+        <div class="notice notice-success is-dismissible"><p><strong>Settings saved.</strong></p></div>
+      <?php endif; ?>
+
+      <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+        <?php wp_nonce_field( 'flame_amano_save_settings', 'flame_amano_settings_nonce' ); ?>
+        <input type="hidden" name="action" value="flame_amano_save_settings" />
+
+        <h2>Regular Hours</h2>
+        <p>Configure which service periods are available on each day of the week. Time slots shown to customers will be generated in 30-minute steps within each enabled range.</p>
+
+        <table class="wp-list-table widefat fixed striped" style="max-width:980px;border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th style="width:100px;">Day</th>
+              <th style="width:55px;text-align:center;">Open</th>
+              <th style="width:55px;text-align:center;">Lunch</th>
+              <th>Lunch Start</th>
+              <th>Lunch End</th>
+              <th style="width:55px;text-align:center;">Dinner</th>
+              <th>Dinner Start</th>
+              <th>Dinner End</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ( $day_order as $dow ) :
+                $d = $hours[ $dow ];
+            ?>
+            <tr>
+              <td><strong><?php echo esc_html( $day_names[ $dow ] ); ?></strong></td>
+              <td style="text-align:center;"><input type="checkbox" name="flame_hours[<?php echo esc_attr( $dow ); ?>][enabled]" value="1" <?php checked( ! empty( $d['enabled'] ) ); ?>></td>
+              <td style="text-align:center;"><input type="checkbox" name="flame_hours[<?php echo esc_attr( $dow ); ?>][lunch_enabled]" value="1" <?php checked( ! empty( $d['lunch_enabled'] ) ); ?>></td>
+              <td><?php echo flame_amano_time_select( "flame_hours[{$dow}][lunch_start]", $d['lunch_start'] ); ?></td>
+              <td><?php echo flame_amano_time_select( "flame_hours[{$dow}][lunch_end]",   $d['lunch_end']   ); ?></td>
+              <td style="text-align:center;"><input type="checkbox" name="flame_hours[<?php echo esc_attr( $dow ); ?>][dinner_enabled]" value="1" <?php checked( ! empty( $d['dinner_enabled'] ) ); ?>></td>
+              <td><?php echo flame_amano_time_select( "flame_hours[{$dow}][dinner_start]", $d['dinner_start'] ); ?></td>
+              <td><?php echo flame_amano_time_select( "flame_hours[{$dow}][dinner_end]",   $d['dinner_end']   ); ?></td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+
+        <h2 style="margin-top:32px;">Special Events</h2>
+        <p>Override hours for specific dates (e.g. public holidays, private events). Special events take priority over regular weekly hours on the matching date.</p>
+
+        <table class="wp-list-table widefat fixed striped" id="flame-events-table" style="max-width:1100px;border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th style="width:130px;">Date</th>
+              <th style="width:150px;">Event Name</th>
+              <th style="width:55px;text-align:center;">Open</th>
+              <th style="width:55px;text-align:center;">Lunch</th>
+              <th>Lunch Start</th>
+              <th>Lunch End</th>
+              <th style="width:55px;text-align:center;">Dinner</th>
+              <th>Dinner Start</th>
+              <th>Dinner End</th>
+              <th style="width:70px;"></th>
+            </tr>
+          </thead>
+          <tbody id="flame-events-body">
+            <?php
+            $event_index = 0;
+            foreach ( $events as $event ) :
+                $ev_lunch_start  = isset( $event['lunch_start'] )  ? $event['lunch_start']  : '11:30';
+                $ev_lunch_end    = isset( $event['lunch_end'] )    ? $event['lunch_end']    : '13:30';
+                $ev_dinner_start = isset( $event['dinner_start'] ) ? $event['dinner_start'] : '17:00';
+                $ev_dinner_end   = isset( $event['dinner_end'] )   ? $event['dinner_end']   : '20:30';
+            ?>
+            <tr>
+              <td><input type="date" name="flame_events[<?php echo esc_attr( $event_index ); ?>][date]" value="<?php echo esc_attr( $event['date'] ?? '' ); ?>" style="width:120px;"></td>
+              <td><input type="text" name="flame_events[<?php echo esc_attr( $event_index ); ?>][name]" value="<?php echo esc_attr( $event['name'] ?? '' ); ?>" placeholder="Event name" style="width:140px;"></td>
+              <td style="text-align:center;"><input type="checkbox" name="flame_events[<?php echo esc_attr( $event_index ); ?>][enabled]" value="1" <?php checked( ! empty( $event['enabled'] ) ); ?>></td>
+              <td style="text-align:center;"><input type="checkbox" name="flame_events[<?php echo esc_attr( $event_index ); ?>][lunch_enabled]" value="1" <?php checked( ! empty( $event['lunch_enabled'] ) ); ?>></td>
+              <td><?php echo flame_amano_time_select( "flame_events[{$event_index}][lunch_start]",  $ev_lunch_start  ); ?></td>
+              <td><?php echo flame_amano_time_select( "flame_events[{$event_index}][lunch_end]",    $ev_lunch_end    ); ?></td>
+              <td style="text-align:center;"><input type="checkbox" name="flame_events[<?php echo esc_attr( $event_index ); ?>][dinner_enabled]" value="1" <?php checked( ! empty( $event['dinner_enabled'] ) ); ?>></td>
+              <td><?php echo flame_amano_time_select( "flame_events[{$event_index}][dinner_start]", $ev_dinner_start ); ?></td>
+              <td><?php echo flame_amano_time_select( "flame_events[{$event_index}][dinner_end]",   $ev_dinner_end   ); ?></td>
+              <td><button type="button" class="button flame-remove-event">Remove</button></td>
+            </tr>
+            <?php
+                $event_index++;
+            endforeach;
+            ?>
+          </tbody>
+        </table>
+
+        <p><button type="button" class="button" id="flame-add-event">+ Add Special Event</button></p>
+
+        <p class="submit"><input type="submit" class="button-primary" value="Save Settings"></p>
+      </form>
+    </div>
+
+    <script>
+    (function(){
+      var tbody  = document.getElementById('flame-events-body');
+      var addBtn = document.getElementById('flame-add-event');
+      var rowIdx = <?php echo (int) $event_index; ?>;
+      var timeOptions = <?php echo wp_json_encode( array_map( function( $t ) {
+          $ts = strtotime( $t );
+          return array( 'value' => $t, 'label' => $ts ? date( 'g:i a', $ts ) : $t );
+      }, $valid_times ) ); ?>;
+
+      function makeSelect(name, selected) {
+        var html = '<select name="' + name + '">';
+        timeOptions.forEach(function(o) {
+          html += '<option value="' + o.value + '"' + (o.value === selected ? ' selected' : '') + '>' + o.label + '</option>';
+        });
+        html += '</select>';
+        return html;
+      }
+
+      function addRow() {
+        var i  = rowIdx++;
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="date" name="flame_events[' + i + '][date]" style="width:120px;"></td>' +
+          '<td><input type="text" name="flame_events[' + i + '][name]" placeholder="Event name" style="width:140px;"></td>' +
+          '<td style="text-align:center;"><input type="checkbox" name="flame_events[' + i + '][enabled]" value="1" checked></td>' +
+          '<td style="text-align:center;"><input type="checkbox" name="flame_events[' + i + '][lunch_enabled]" value="1"></td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][lunch_start]',  '11:30') + '</td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][lunch_end]',    '13:30') + '</td>' +
+          '<td style="text-align:center;"><input type="checkbox" name="flame_events[' + i + '][dinner_enabled]" value="1" checked></td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][dinner_start]', '17:00') + '</td>' +
+          '<td>' + makeSelect('flame_events[' + i + '][dinner_end]',   '20:30') + '</td>' +
+          '<td><button type="button" class="button flame-remove-event">Remove</button></td>';
+        tbody.appendChild(tr);
+      }
+
+      addBtn.addEventListener('click', addRow);
+      tbody.addEventListener('click', function(e) {
+        if (e.target && e.target.classList.contains('flame-remove-event')) {
+          e.target.closest('tr').remove();
+        }
+      });
+    })();
+    </script>
+    <?php
+}
 
 function flame_amano_handle_submission() {
     // ensure it is a POST
@@ -271,34 +652,23 @@ add_shortcode( 'flame_amano_booking_form', function() {
     // Minimum allowed date: allow bookings from today
     $min_date = date( 'Y-m-d' );
 
-    // Helper to determine if a date (YYYY-MM-DD) is Fri/Sat/Sun (PHP: Mon=1 .. Sun=7)
-    // COMMENTED OUT - lunch hours disabled
-    // $is_weekend_fs = false;
-    // if ( ! empty( $posted['selectedDate'] ) ) {
-    //     $ts = strtotime( $posted['selectedDate'] );
-    //     if ( $ts !== false ) {
-    //         $dow = intval( date( 'N', $ts ) );
-    //         if ( in_array( $dow, array( 5, 6, 7 ), true ) ) {
-    //             $is_weekend_fs = true;
-    //         }
-    //     }
-    // }
+    // Build grouped time structure for the initial render based on the preserved/posted date.
+    $initial_date   = ! empty( $posted['selectedDate'] ) ? $posted['selectedDate'] : $min_date;
+    $initial_groups = flame_amano_get_groups_for_date( $initial_date );
 
-    // Ranges
-    $evening_ranges = array( array( 'start' => '17:00', 'end' => '20:30' ) );
-    // COMMENTED OUT - lunch hours disabled
-    // $morning_ranges = array( array( 'start' => '11:30', 'end' => '13:30' ) );
-
-    // Build grouped structure for initial render
-    $initial_groups = array();
-    // COMMENTED OUT - lunch hours disabled
-    // if ( $is_weekend_fs ) {
-    //     $initial_groups[] = array( 'label' => 'Lunch', 'ranges' => $morning_ranges );
-    //     $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
-    // } else {
-    //     $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
-    // }
-    $initial_groups[] = array( 'label' => 'Dinner', 'ranges' => $evening_ranges );
+    // Build per-day and special-event configs to pass to the JS layer so the
+    // client can rebuild time options on date change without a server round-trip.
+    $hours_raw = flame_amano_get_hours();
+    $js_hours  = array(); // indexed 0–6 (Sun–Sat), value = groups array
+    for ( $i = 0; $i <= 6; $i++ ) {
+        $js_hours[ $i ] = flame_amano_build_groups_from_config( $hours_raw[ $i ] );
+    }
+    $js_events = array(); // keyed by 'YYYY-MM-DD', value = groups array
+    foreach ( flame_amano_get_special_events() as $ev ) {
+        if ( ! empty( $ev['enabled'] ) && ! empty( $ev['date'] ) ) {
+            $js_events[ $ev['date'] ] = flame_amano_build_groups_from_config( $ev );
+        }
+    }
 
     // Function to generate grouped time options server-side for initial render
     $generate_grouped_time_options = function( $groups, $selected ) {
@@ -313,7 +683,7 @@ add_shortcode( 'flame_amano_booking_form', function() {
                 if ( $start_ts === false || $end_ts === false || $end_ts < $start_ts ) {
                     continue;
                 }
-                for ( $t = $start_ts; $t <= $end_ts; $t += 15 * 60 ) {
+                for ( $t = $start_ts; $t <= $end_ts; $t += 30 * 60 ) {
                     $value      = date( 'H:i', $t );
                     $label_time = date( 'g:i a', $t );
                     $out       .= '<option value="' . esc_attr( $value ) . '" ' . selected( $selected, $value, false ) . '>' . esc_html( $label_time ) . '</option>';
@@ -395,9 +765,13 @@ add_shortcode( 'flame_amano_booking_form', function() {
 
     <script>
     (function(){
-      // Minimum allowed date (same as server-side)
       var minDate = <?php echo wp_json_encode( $min_date ); ?>;
       var preservedTime = <?php echo wp_json_encode( $posted['selectedTime'] ); ?> || '';
+
+      // Per-day groups config: key = day-of-week integer (0=Sun..6=Sat)
+      var hoursConfig = <?php echo wp_json_encode( $js_hours ); ?>;
+      // Special-event groups config: key = 'YYYY-MM-DD'
+      var eventsConfig = <?php echo wp_json_encode( $js_events ); ?>;
 
       function parseHM(hm){ var p=hm.split(':'); return parseInt(p[0],10)*60 + parseInt(p[1],10); }
       function formatValue(mins){ var h=Math.floor(mins/60), m=mins%60; return (h<10?'0'+h:h)+':'+(m<10?'0'+m:m); }
@@ -410,16 +784,12 @@ add_shortcode( 'flame_amano_booking_form', function() {
           g.ranges.forEach(function(r){
             var start=parseHM(r.start), end=parseHM(r.end);
             if(isNaN(start)||isNaN(end)||end<start) return;
-            for(var t=start;t<=end;t+=15){ opts.push({value:formatValue(t),label:formatLabel(t)}); }
+            for(var t=start;t<=end;t+=30){ opts.push({value:formatValue(t),label:formatLabel(t)}); }
           });
-          out.push({label:g.label,options:opts});
+          if(opts.length) out.push({label:g.label,options:opts});
         });
         return out;
       }
-
-      // COMMENTED OUT - lunch hours disabled
-      // var morningRanges=[{start:'11:30',end:'13:30'}];
-      var eveningRanges=[{start:'17:00',end:'20:30'}];
 
       var dateInput=document.getElementById('selectedDate');
       var timeSelect=document.getElementById('selectedTime');
@@ -427,17 +797,19 @@ add_shortcode( 'flame_amano_booking_form', function() {
       if(dateInput && minDate){ dateInput.min = minDate; }
 
       function rebuildTimeOptions(forDateStr){
-        var groups=[{label:'Dinner',ranges:eveningRanges}];
-        // COMMENTED OUT - lunch hours disabled
-        // if(forDateStr){
-        //   var d=new Date(forDateStr+'T00:00:00');
-        //   if(!isNaN(d.getTime())){
-        //     var dow=d.getDay(); // 0=Sun..6=Sat
-        //     if(dow===5||dow===6||dow===0){
-        //       groups=[{label:'Lunch',ranges:morningRanges},{label:'Dinner',ranges:eveningRanges}];
-        //     }
-        //   }
-        // }
+        var groups = [];
+        if(forDateStr && eventsConfig[forDateStr] !== undefined){
+          groups = eventsConfig[forDateStr];
+        } else if(forDateStr){
+          var d = new Date(forDateStr+'T00:00:00');
+          if(!isNaN(d.getTime())){
+            var dow = d.getDay(); // 0=Sun..6=Sat
+            groups = hoursConfig[dow] || [];
+          }
+        } else {
+          var today = new Date();
+          groups = hoursConfig[today.getDay()] || [];
+        }
         var prevValue = preservedTime || timeSelect.value || '';
         timeSelect.innerHTML = '<option value="">Select a time</option>';
         var grouped = buildGroupedOptions(groups);
